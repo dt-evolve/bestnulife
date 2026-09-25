@@ -22,14 +22,20 @@ The fill script is `tools/docbuilder/fill_template.py` (run it with `python3`). 
    - Named placeholders such as `{{client_name}}`: run `fill_template.py fields <template>`.
    - **Generic or repeated placeholders** (every blank is `{{field}}`, `{{ }}`, and so on): run `fill_template.py occurrences <template>` to see each blank with its nearby label. Write a JSON list of descriptive names in document order (reuse a name where two blanks must always match, such as a total that appears twice), then run `fill_template.py rename <template> names.json templates/<name>.docx --strip-underscores`. Save a matching `templates/<name>.example.json` with clearly fake sample values and `_notes`. From then on, fill the named template.
    - Informal markers such as `[Client Name]`, `<insert date>`, `XX`, `TBD`, `☐` checkboxes, or highlighted example text also count as fields.
-4. **Gather values.** Use what the user gave you. Never invent facts that matter: names, legal entity names, addresses, dates, prices, fees, terms, medical or dietary claims, contact details. If any are missing, stop and return a short list of exactly what you still need. Derived values (prorated charges, billing dates, totals) you may calculate, but show the math in your report. Fields that only need writing (summaries, scope descriptions, intros) you may draft yourself from the facts provided.
-5. **Build the document.**
-   - Write the values to `documents/<slug>/values.json`. Values can be nested objects to match dotted names; a list becomes one line per item.
+4. **Price from the catalog when there is one.** If the user names SKUs, services, or plans and a catalog exists in `catalog/` (import a new export with `python3 tools/docbuilder/catalog.py import <file.xlsx|csv> catalog/<name>.json`), never type fees or scope by hand. Run
+   `python3 tools/docbuilder/catalog.py quote catalog/<name>.json --sku <SKU> [--sku <SKU>:<qty> ...] --start YYYY-MM-DD --out documents/<slug>/quote.json`
+   and merge its values into `values.json`. Use `catalog.py list catalog/<name>.json --industry <name>` to map service names to SKUs, and confirm the SKUs with the user if the mapping is not obvious.
+   - **Errors** (exit status 2) block the document: inactive, on-hold, or not-offered SKUs, the wrong industry, a quantity the SKU does not allow, or a missing mandatory SKU. Do not build the document. Report each error and what would fix it.
+   - **Warnings** (for example catalog scope that conflicts with the form's wording) and **controls** (compliance requirements, HARD GATE items) must appear in your report. Never drop them silently. Ask the user whether any control belongs in the form's special terms before adding it.
+   - The Initial Term must be at least the quote's `minimum_initial_term`.
+5. **Gather values.** Use what the user gave you. Never invent facts that matter: names, legal entity names, addresses, dates, prices, fees, terms, medical or dietary claims, contact details. If any are missing, stop and return a short list of exactly what you still need. Derived values (prorated charges, billing dates, totals) you may calculate, but show the math in your report. Fields that only need writing (summaries, scope descriptions, intros) you may draft yourself from the facts provided.
+6. **Build the document.**
+   - Write the values to `documents/<slug>/values.json`. Values can be nested objects to match dotted names. A list becomes one line per item, or one table row per item when the placeholders sit in a table row.
    - For placeholder templates, run `fill_template.py fill <template> documents/<slug>/values.json documents/<slug>/<output-file> --strict` and keep the template's file extension.
    - For templates with informal markers or example-style templates, write the finished document yourself, keeping the template's structure, headings, order, and formatting. Only the placeholder content should change.
    - Never modify the original template or legal wording. Signature lines stay blank for wet or e-signature.
-6. **Check your work.** Re-read the output (use `text` for `.docx`). Confirm there are no leftover `{{ }}`, brackets, `TBD`, or sample text, that names, dates, and amounts are consistent everywhere they appear, and that exactly one box is checked in each checkbox group.
-7. **Report back** with the output path, a one-line summary of what was filled, any values you calculated (with the math), anything you drafted yourself so the user can review it, and any assumptions.
+7. **Check your work.** Re-read the output (use `text` for `.docx`). Confirm there are no leftover `{{ }}`, brackets, `TBD`, or sample text, that names, dates, and amounts are consistent everywhere they appear, and that exactly one box is checked in each checkbox group.
+8. **Report back** with the output path, a one-line summary of what was filled, any values you calculated (with the math), anything you drafted yourself so the user can review it, and any assumptions.
 
 ## Writing style
 

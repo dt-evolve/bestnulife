@@ -52,3 +52,17 @@ python3 tools/docbuilder/fill_template.py fields templates/client-welcome-letter
 python3 tools/docbuilder/fill_template.py fill templates/client-welcome-letter.md templates/client-welcome-letter.example.json documents/test/welcome.md --strict
 python3 tools/docbuilder/fill_template.py text path/to/template.docx
 ```
+
+## Pricing from a SKU catalog
+
+Keep catalogs in `catalog/` (not committed: pricing stays private). Import an export once, then quote by SKU:
+
+```
+python3 tools/docbuilder/catalog.py import my-catalog.xlsx catalog/my-catalog.json
+python3 tools/docbuilder/catalog.py list catalog/my-catalog.json --industry Healthcare
+python3 tools/docbuilder/catalog.py quote catalog/my-catalog.json --sku P-SEM-1-HC --sku HC-COMP-1-HC --start 2026-10-15 --out quote.json
+```
+
+`quote` builds the fee table lines, total, prorated first charge, and billing dates, and checks the catalog's rules: inactive or on-hold SKUs, industry mismatches, quantity limits, mandatory SKUs, and minimum terms. It also lists every compliance control that applies. Any blocking problem stops the document from being built.
+
+In Word templates, list values inside a table row repeat that row once per item, so one fee table row becomes one row per SKU.

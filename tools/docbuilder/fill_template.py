@@ -17,7 +17,8 @@ Commands:
 
 Placeholders look like {{client_name}} or {{ client.name }}. Values come from a
 JSON object; dotted names read nested objects. Multi-line values become line
-breaks in .docx output. Placeholders with no value are left in place and
+breaks in .docx output, except inside a table row, where list values repeat
+the row once per item. Placeholders with no value are left in place and
 reported, or cause an error with --strict.
 """
 
@@ -35,6 +36,7 @@ TEXT_TYPES = {".md", ".markdown", ".txt", ".html", ".htm"}
 DOCX_PARTS = re.compile(r"word/(document|header\d*|footer\d*|footnotes|endnotes)\.xml$")
 PARAGRAPH = re.compile(r"<w:p[ >].*?</w:p>", re.S)
 TEXT_NODE = re.compile(r"(<w:t(?: [^>]*)?>)(.*?)(</w:t>)", re.S)
+TABLE_ROW = re.compile(r"<w:tr[ >].*?</w:tr>", re.S)
 TEXT_OR_BREAK = re.compile(r"<w:br\s*/>|" + TEXT_NODE.pattern, re.S)
 
 
@@ -153,12 +155,47 @@ def fill_paragraph(para, resolve, pattern=PLACEHOLDER):
     return "".join(out)
 
 
-def rewrite_docx(src, dest, resolve, pattern=PLACEHOLDER):
+def repeat_rows(xml, values, missing):
+    """Repeat a table row once per item when its placeholders hold lists.
+
+    A row with {{service.line}} and {{service.fee}}, where both are lists of
+    three, becomes three rows. Scalar values in the row repeat on every copy.
+    """
+    def expand(match):
+        row = match.group(0)
+        text = "".join(html.unescape(m.group(2)) for m in TEXT_NODE.finditer(row))
+        names = set(PLACEHOLDER.findall(text))
+        lists = [lookup(values, n) for n in names if isinstance(lookup(values, n), list)]
+        if not lists:
+            return row
+        copies = []
+        for i in range(max(len(v) for v in lists)):
+            def resolve(name, i=i):
+                value = lookup(values, name)
+                if value is None:
+                    missing.add(name)
+                    return None
+                if isinstance(value, list):
+                    return str(value[i]) if i < len(value) else ""
+                return to_text(value)
+
+            copy = PARAGRAPH.sub(lambda m: fill_paragraph(m.group(0), resolve), row)
+            if i:  # Word expects paragraph ids to be unique
+                copy = re.sub(r' w14:(paraId|textId)="[^"]*"', "", copy)
+            copies.append(copy)
+        return "".join(copies)
+
+    return TABLE_ROW.sub(expand, xml)
+
+
+def rewrite_docx(src, dest, resolve, pattern=PLACEHOLDER, values=None, missing=None):
     with zipfile.ZipFile(src) as zin, zipfile.ZipFile(dest, "w", zipfile.ZIP_DEFLATED) as zout:
         parts = docx_parts(zin)
         rewritten = {}
         for part in parts:  # same order as read_text, so occurrence numbers line up
             xml = zin.read(part).decode("utf-8")
+            if values is not None:
+                xml = repeat_rows(xml, values, missing)
             rewritten[part] = PARAGRAPH.sub(lambda m: fill_paragraph(m.group(0), resolve, pattern), xml)
         for item in zin.infolist():
             data = rewritten[item.filename].encode("utf-8") if item.filename in rewritten else zin.read(item.filename)
@@ -225,7 +262,7 @@ def fill(template, values_path, output, strict):
     missing = set()
 
     if suffix == ".docx":
-        rewrite_docx(template, output, value_resolver(values, missing))
+        rewrite_docx(template, output, value_resolver(values, missing), values=values, missing=missing)
     elif suffix in TEXT_TYPES:
         escape = suffix in {".html", ".htm"}
         text = fill_plain(template.read_text(encoding="utf-8"), values, missing, escape)
