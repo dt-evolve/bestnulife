@@ -5,9 +5,15 @@ Supported template types: .docx, .md, .markdown, .txt, .html, .htm
 Standard library only, so it runs anywhere Python 3.8+ is available.
 
 Commands:
-  fields <template>                       List the placeholders a template expects.
-  text   <template>                       Print a template's plain text (useful for .docx).
-  fill   <template> <values.json> <out>   Write a filled copy of the template.
+  fields      <template>                       List the placeholders a template expects.
+  occurrences <template>                       List every placeholder in order, with nearby text
+                                               as a label hint (for templates that reuse one
+                                               generic name such as {{field}} for every blank).
+  rename      <template> <names.json> <out>    Give each placeholder occurrence its own name.
+                                               names.json is a list in document order; null
+                                               keeps an occurrence as is.
+  text        <template>                       Print a template's plain text (useful for .docx).
+  fill        <template> <values.json> <out>   Write a filled copy of the template.
 
 Placeholders look like {{client_name}} or {{ client.name }}. Values come from a
 JSON object; dotted names read nested objects. Multi-line values become line
@@ -89,11 +95,12 @@ def fill_plain(text, values, missing, escape):
     return PLACEHOLDER.sub(replace, text)
 
 
-def fill_paragraph(para, values, missing):
+def fill_paragraph(para, resolve, pattern=PLACEHOLDER):
     """Replace placeholders in one <w:p>, even when Word split them across runs.
 
-    Only the runs a placeholder touches are rewritten; the value takes the
-    formatting of the run where the placeholder starts.
+    resolve(name) returns the replacement text, or None to leave a placeholder
+    alone. Only the runs a placeholder touches are rewritten; the value takes
+    the formatting of the run where the placeholder starts.
     """
     nodes = list(TEXT_NODE.finditer(para))
     if not nodes:
@@ -114,16 +121,16 @@ def fill_paragraph(para, values, missing):
                 return i
         return 0
 
+    matches = list(pattern.finditer(full))
+    replacements = [resolve(m.group(1)) for m in matches]
     changed = False
-    for match in reversed(list(PLACEHOLDER.finditer(full))):
-        value = lookup(values, match.group(1))
+    for match, value in reversed(list(zip(matches, replacements))):
         if value is None:
-            missing.add(match.group(1))
             continue
         first, last = node_at(match.start()), node_at(match.end() - 1)
         head = texts[first][: match.start() - starts[first]]
         tail = texts[last][match.end() - starts[last]:]
-        texts[first] = head + "\x00" + to_text(value) + "\x00" + (tail if first == last else "")
+        texts[first] = head + "\x00" + value + "\x00" + (tail if first == last else "")
         if first != last:
             for i in range(first + 1, last):
                 texts[i] = ""
@@ -146,16 +153,69 @@ def fill_paragraph(para, values, missing):
     return "".join(out)
 
 
-def fill_docx(src, dest, values, missing):
+def rewrite_docx(src, dest, resolve, pattern=PLACEHOLDER):
     with zipfile.ZipFile(src) as zin, zipfile.ZipFile(dest, "w", zipfile.ZIP_DEFLATED) as zout:
-        parts = set(docx_parts(zin))
+        parts = docx_parts(zin)
+        rewritten = {}
+        for part in parts:  # same order as read_text, so occurrence numbers line up
+            xml = zin.read(part).decode("utf-8")
+            rewritten[part] = PARAGRAPH.sub(lambda m: fill_paragraph(m.group(0), resolve, pattern), xml)
         for item in zin.infolist():
-            data = zin.read(item.filename)
-            if item.filename in parts:
-                xml = data.decode("utf-8")
-                xml = PARAGRAPH.sub(lambda m: fill_paragraph(m.group(0), values, missing), xml)
-                data = xml.encode("utf-8")
+            data = rewritten[item.filename].encode("utf-8") if item.filename in rewritten else zin.read(item.filename)
             zout.writestr(item, data)
+
+
+def value_resolver(values, missing):
+    def resolve(name):
+        value = lookup(values, name)
+        if value is None:
+            missing.add(name)
+            return None
+        return to_text(value)
+
+    return resolve
+
+
+def list_occurrences(path):
+    if path.suffix.lower() == ".docx":
+        lines = [line for line in read_text(path).split("\n")]
+    else:
+        lines = path.read_text(encoding="utf-8").split("\n")
+    found, previous = [], ""
+    for line in lines:
+        for match in PLACEHOLDER.finditer(line):
+            found.append({
+                "index": len(found),
+                "name": match.group(1),
+                "line": line.strip(),
+                "previous_line": previous,
+            })
+        if line.strip():
+            previous = line.strip()
+    return found
+
+
+def rename(template, names_path, output, strip_underscores):
+    names = json.loads(Path(names_path).read_text(encoding="utf-8"))
+    total = len(list_occurrences(template))
+    if len(names) != total:
+        sys.exit(f"names.json has {len(names)} entries but the template has {total} placeholders")
+    counter = iter(names)
+
+    def resolve(_name):
+        new = next(counter)
+        return None if new is None else "{{" + new + "}}"
+
+    pattern = PLACEHOLDER
+    if strip_underscores:
+        pattern = re.compile(r"_*" + PLACEHOLDER.pattern + r"_*")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    if template.suffix.lower() == ".docx":
+        rewrite_docx(template, output, resolve, pattern)
+    else:
+        text = pattern.sub(lambda m: resolve(m.group(1)) or m.group(0), template.read_text(encoding="utf-8"))
+        output.write_text(text, encoding="utf-8")
+    print(f"Wrote {output}")
 
 
 def fill(template, values_path, output, strict):
@@ -165,7 +225,7 @@ def fill(template, values_path, output, strict):
     missing = set()
 
     if suffix == ".docx":
-        fill_docx(template, output, values, missing)
+        rewrite_docx(template, output, value_resolver(values, missing))
     elif suffix in TEXT_TYPES:
         escape = suffix in {".html", ".htm"}
         text = fill_plain(template.read_text(encoding="utf-8"), values, missing, escape)
@@ -185,8 +245,14 @@ def fill(template, values_path, output, strict):
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
-    for name in ("fields", "text"):
+    for name in ("fields", "occurrences", "text"):
         sub.add_parser(name).add_argument("template", type=Path)
+    rename_cmd = sub.add_parser("rename")
+    rename_cmd.add_argument("template", type=Path)
+    rename_cmd.add_argument("names", type=Path)
+    rename_cmd.add_argument("output", type=Path)
+    rename_cmd.add_argument("--strip-underscores", action="store_true",
+                            help="also remove ____ fill-in lines touching a placeholder")
     fill_cmd = sub.add_parser("fill")
     fill_cmd.add_argument("template", type=Path)
     fill_cmd.add_argument("values", type=Path)
@@ -198,12 +264,17 @@ def main():
         sys.exit(f"Template not found: {args.template}")
     if args.command == "fields":
         print(json.dumps(list_fields(args.template), indent=2))
+    elif args.command == "occurrences":
+        print(json.dumps(list_occurrences(args.template), indent=2, ensure_ascii=False))
     elif args.command == "text":
         print(read_text(args.template))
     else:
         if args.output.resolve() == args.template.resolve():
             sys.exit("Refusing to overwrite the template; choose a different output path.")
-        fill(args.template, args.values, args.output, args.strict)
+        if args.command == "rename":
+            rename(args.template, args.names, args.output, args.strip_underscores)
+        else:
+            fill(args.template, args.values, args.output, args.strict)
 
 
 if __name__ == "__main__":

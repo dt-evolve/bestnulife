@@ -22,6 +22,25 @@ Any of these work:
 
 Optional: add a `<template-name>.example.json` next to a template with sample values. It shows the agent what each field means.
 
+## Templates in this folder
+
+| Template | What it builds |
+| --- | --- |
+| `client-welcome-letter.md` | Best Life Nutrition new-client welcome letter |
+
+Each has a matching `.example.json` with made-up sample values. The `_notes` inside explain fields that need a calculation or a choice.
+
+## Templates where every blank looks the same
+
+Some forms use the same placeholder, like `{{field}}`, for every blank. The agent handles this: it lists each blank with its label, gives each one a real name, and saves a reusable named copy here. You can do it by hand too:
+
+```
+python3 tools/docbuilder/fill_template.py occurrences my-form.docx
+python3 tools/docbuilder/fill_template.py rename my-form.docx names.json templates/my-form.docx --strip-underscores
+```
+
+`names.json` is a list of names in the order the blanks appear. `--strip-underscores` removes `____` fill-in lines next to a blank so the filled form looks clean.
+
 ## Word templates
 
 For `.docx` templates, type placeholders in Word as normal. The fill script handles Word splitting a placeholder across formatting runs, and the filled value keeps the formatting of the placeholder. Values with multiple lines (or JSON lists) become line breaks.
