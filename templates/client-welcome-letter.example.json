@@ -1,0 +1,14 @@
+{
+  "client": { "first_name": "Jane" },
+  "date": "October 1, 2026",
+  "package": "Transformation",
+  "discovery_summary": "During our discovery call, you shared that busy workdays leave you skipping lunch and snacking late at night, and that your energy dips every afternoon.",
+  "goals": [
+    "- Eat three balanced meals on workdays",
+    "- Improve afternoon energy",
+    "- Get to sleep by 10:30 pm most nights"
+  ],
+  "intake_due_date": "October 3, 2026",
+  "first_checkin": "Tuesday, October 7, 2026 at 12:00 pm",
+  "checkin_schedule": "We will check in weekly on Tuesdays, with a monthly progress analysis at the end of each month."
+}
